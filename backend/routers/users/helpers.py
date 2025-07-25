@@ -1,6 +1,9 @@
 from fastapi import HTTPException, status, UploadFile
 from supabase import Client
-from config import get_supabase_admin_client, get_supabase_storage
+from config import get_supabase_admin_client, get_supabase_storage, get_db
+from models import VendorProfile, SupplierProfile, Review
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 import uuid
 import os
 from typing import List
@@ -121,5 +124,62 @@ class UserHelpers:
         except Exception as e:
             logger.error(f"Error deleting profile image: {str(e)}")
             return False
+
+    async def update_vendor_rating(self, user_profile_id: str, db: AsyncSession):
+        """
+        Update vendor's average rating and total reviews count
+        """
+        try:
+            # Get all reviews for this vendor
+            result = await db.execute(
+                select(func.avg(Review.rating), func.count(Review.id))
+                .where(Review.reviewed_user_id == user_profile_id)
+                .where(Review.is_hidden == False)
+            )
+            avg_rating, total_reviews = result.first()
+            
+            # Update vendor profile
+            result = await db.execute(
+                select(VendorProfile).where(VendorProfile.user_profile_id == user_profile_id)
+            )
+            vendor_profile = result.scalar_one_or_none()
+            
+            if vendor_profile:
+                vendor_profile.average_rating = float(avg_rating or 0.0)
+                vendor_profile.total_reviews = int(total_reviews or 0)
+                await db.commit()
+                
+        except Exception as e:
+            logger.error(f"Error updating vendor rating: {str(e)}")
+            await db.rollback()
+
+    async def update_supplier_rating(self, user_profile_id: str, db: AsyncSession):
+        """
+        Update supplier's average rating and total reviews count
+        """
+        try:
+            # Get all reviews for this supplier
+            result = await db.execute(
+                select(func.avg(Review.rating), func.count(Review.id))
+                .where(Review.reviewed_user_id == user_profile_id)
+                .where(Review.is_hidden == False)
+            )
+            avg_rating, total_reviews = result.first()
+            
+            # Update supplier profile
+            result = await db.execute(
+                select(SupplierProfile).where(SupplierProfile.user_profile_id == user_profile_id)
+            )
+            supplier_profile = result.scalar_one_or_none()
+            
+            if supplier_profile:
+                supplier_profile.average_rating = float(avg_rating or 0.0)
+                supplier_profile.total_reviews = int(total_reviews or 0)
+                await db.commit()
+                
+        except Exception as e:
+            logger.error(f"Error updating supplier rating: {str(e)}")
+            await db.rollback()
+
 
 user_helpers = UserHelpers()

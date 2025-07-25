@@ -11,12 +11,14 @@ from sqlalchemy import (
     Computed,
     text,
     ForeignKey,
-    Column
+    Column,
+    Float,
+    Integer
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.ext.declarative import declarative_base
-from typing import Optional
+from typing import Optional, List
 import uuid
 
 Base = declarative_base()
@@ -167,4 +169,235 @@ class UserProfile(Base):
     )
     
     user: Mapped["Users"] = relationship("Users", back_populates="user_profile")
+    vendor_profile: Mapped[Optional["VendorProfile"]] = relationship(
+        "VendorProfile", 
+        back_populates="user_profile", 
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
+    supplier_profile: Mapped[Optional["SupplierProfile"]] = relationship(
+        "SupplierProfile", 
+        back_populates="user_profile", 
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
+
+
+class VendorProfile(Base):
+    """
+    Vendor-specific profile information for local street vendors
+    """
+    __tablename__ = "vendor_profiles"
     
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_profile_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False
+    )
+    
+    # Location Information
+    street_address: Mapped[Optional[str]] = mapped_column(String(255))
+    city: Mapped[Optional[str]] = mapped_column(String(100))
+    state: Mapped[Optional[str]] = mapped_column(String(100))
+    postal_code: Mapped[Optional[str]] = mapped_column(String(20))
+    latitude: Mapped[Optional[float]] = mapped_column(Float)
+    longitude: Mapped[Optional[float]] = mapped_column(Float)
+    operating_hours: Mapped[Optional[dict]] = mapped_column(JSONB)  # JSON for flexible schedule
+    
+    # Business Details
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    specialties: Mapped[Optional[list]] = mapped_column(JSONB)  # Array of specialties
+    payment_methods: Mapped[Optional[list]] = mapped_column(JSONB)  # Accepted payment methods
+    
+    # Contact Information
+    phone_number: Mapped[Optional[str]] = mapped_column(String(20))
+    
+    # Business Status
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    
+    # Rating System
+    average_rating: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    total_reviews: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    
+    user_profile: Mapped["UserProfile"] = relationship("UserProfile", back_populates="vendor_profile")
+    reviews_received: Mapped[list["Review"]] = relationship(
+        "Review", 
+        foreign_keys="Review.reviewed_user_id",
+        back_populates="reviewed_vendor",
+        cascade="all, delete-orphan"
+    )
+    reviews_given: Mapped[list["Review"]] = relationship(
+        "Review", 
+        foreign_keys="Review.reviewer_user_id",
+        back_populates="reviewer_vendor"
+    )
+
+
+class SupplierProfile(Base):
+    """
+    Supplier-specific profile information for wholesale suppliers
+    """
+    __tablename__ = "supplier_profiles"
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_profile_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False
+    )
+    
+    # Business Information
+    company_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    company_type: Mapped[Optional[str]] = mapped_column(String(100))  # e.g., "Manufacturer", "Distributor", "Wholesaler"
+    business_registration: Mapped[Optional[str]] = mapped_column(String(100))
+    tax_id: Mapped[Optional[str]] = mapped_column(String(50))
+    gst_number: Mapped[Optional[str]] = mapped_column(String(50))
+    
+    # Location Information
+    warehouse_address: Mapped[Optional[str]] = mapped_column(String(255))
+    city: Mapped[Optional[str]] = mapped_column(String(100))
+    state: Mapped[Optional[str]] = mapped_column(String(100))
+    postal_code: Mapped[Optional[str]] = mapped_column(String(20))
+    country: Mapped[str] = mapped_column(String(100), default="India", nullable=False)
+    
+    # Business Details
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    
+    # Contact Information
+    contact_person: Mapped[Optional[str]] = mapped_column(String(100))
+    phone_number: Mapped[Optional[str]] = mapped_column(String(20))
+    alternate_phone: Mapped[Optional[str]] = mapped_column(String(20))
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    website_url: Mapped[Optional[str]] = mapped_column(String(500))
+    
+    # Business Credentials
+    certifications: Mapped[Optional[list]] = mapped_column(JSONB)  # Business certifications
+    years_in_business: Mapped[Optional[int]] = mapped_column(Integer)
+    
+    # Business Status
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    
+    # Rating System
+    average_rating: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    total_reviews: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    
+    user_profile: Mapped["UserProfile"] = relationship("UserProfile", back_populates="supplier_profile")
+    reviews_received: Mapped[list["Review"]] = relationship(
+        "Review", 
+        foreign_keys="Review.reviewed_user_id",
+        back_populates="reviewed_supplier",
+        cascade="all, delete-orphan"
+    )
+    reviews_given: Mapped[list["Review"]] = relationship(
+        "Review", 
+        foreign_keys="Review.reviewer_user_id",
+        back_populates="reviewer_supplier"
+    )
+
+
+class Review(Base):
+    """
+    Review system for vendors and suppliers to rate each other
+    """
+    __tablename__ = "reviews"
+    __table_args__ = (
+        UniqueConstraint("reviewer_user_id", "reviewed_user_id", name="unique_review_per_user_pair"),
+        CheckConstraint("rating >= 1 AND rating <= 5", name="rating_range_check"),
+        CheckConstraint("reviewer_user_id != reviewed_user_id", name="no_self_review_check"),
+    )
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Reviewer (who is giving the review)
+    reviewer_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    
+    # Reviewed (who is receiving the review)
+    reviewed_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    
+    # Review Content
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-5 stars
+    title: Mapped[Optional[str]] = mapped_column(String(200))
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    
+    # Review Context
+    transaction_id: Mapped[Optional[str]] = mapped_column(String(100))  # Optional order/transaction reference
+    review_type: Mapped[Optional[str]] = mapped_column(String(50))  # e.g., "product_quality", "delivery", "communication"
+    
+    # Status
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_hidden: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    
+    # Relationships
+    reviewer_vendor: Mapped[Optional["VendorProfile"]] = relationship(
+        "VendorProfile",
+        foreign_keys=[reviewer_user_id],
+        back_populates="reviews_given",
+        primaryjoin="Review.reviewer_user_id == VendorProfile.user_profile_id"
+    )
+    reviewer_supplier: Mapped[Optional["SupplierProfile"]] = relationship(
+        "SupplierProfile",
+        foreign_keys=[reviewer_user_id],
+        back_populates="reviews_given",
+        primaryjoin="Review.reviewer_user_id == SupplierProfile.user_profile_id"
+    )
+    reviewed_vendor: Mapped[Optional["VendorProfile"]] = relationship(
+        "VendorProfile",
+        foreign_keys=[reviewed_user_id],
+        back_populates="reviews_received",
+        primaryjoin="Review.reviewed_user_id == VendorProfile.user_profile_id"
+    )
+    reviewed_supplier: Mapped[Optional["SupplierProfile"]] = relationship(
+        "SupplierProfile",
+        foreign_keys=[reviewed_user_id],
+        back_populates="reviews_received",
+        primaryjoin="Review.reviewed_user_id == SupplierProfile.user_profile_id"
+    )
