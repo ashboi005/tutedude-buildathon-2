@@ -38,7 +38,7 @@ export function SignInForm() {
     },
   });
 
-  const router = useRouter()
+  const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -60,66 +60,47 @@ export function SignInForm() {
     }
   }
   return (
-    <div className="w-[90%] md:w-[40%]">
-      <Card>
-        <CardHeader>
-          <CardTitle>Login into your account</CardTitle>
-          <CardDescription>
-            Enter your credentials below to continue
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form
-              onSubmit={form.handleSubmit(onSubmit)}
-              className="space-y-8 max-w-3xl mx-auto py-10"
-            >
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-2">
+        <FormField
+          control={form.control}
+          name="email"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Email</FormLabel>
+              <FormControl>
+                <Input placeholder="" type="email" {...field} />
+              </FormControl>
 
-              <FormField
-                control={form.control}
-                name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email</FormLabel>
-                    <FormControl>
-                      <Input placeholder="" type="email" {...field} />
-                    </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
 
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+        <FormField
+          control={form.control}
+          name="password"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Password</FormLabel>
+              <FormControl>
+                <Input placeholder="" type="password" {...field} />
+              </FormControl>
 
-              <FormField
-                control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Password</FormLabel>
-                    <FormControl>
-                      <Input placeholder="" type="password" {...field} />
-                    </FormControl>
-
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="mt-4 text-center text-sm">
-                Dont have an account?{" "}
-                <Link
-                  href="/sign-up"
-                  className="underline underline-offset-4"
-                >
-                  Sign Up
-                </Link>
-              </div>
-              <Button type="submit" className="w-full" disabled={isLoading}>
-                Submit
-              </Button>
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
-    </div>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <div className="mt-4 text-center text-sm">
+          Dont have an account?{" "}
+          <Link href="/sign-up" className="underline underline-offset-4">
+            Sign Up
+          </Link>
+        </div>
+        <Button type="submit" className="w-full" disabled={isLoading}>
+          Submit
+        </Button>
+      </form>
+    </Form>
   );
 }

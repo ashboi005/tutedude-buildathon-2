@@ -1,6 +1,6 @@
-import { SignInForm } from "@/modules/auth/ui/sign-in-form";
+import SignInView from "@/modules/auth/ui/views/sign-in-view";
 import React from "react";
 
 export default function SignInPage() {
-  return <SignInForm />;
+  return <SignInView />;
 }
