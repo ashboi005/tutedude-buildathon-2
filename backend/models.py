@@ -311,6 +311,11 @@ class SupplierProfile(Base):
     )
     
     user_profile: Mapped["UserProfile"] = relationship("UserProfile", back_populates="supplier_profile")
+    products: Mapped[List["Product"]] = relationship(
+        "Product", 
+        back_populates="supplier_profile",
+        cascade="all, delete-orphan"
+    )
     reviews_received: Mapped[list["Review"]] = relationship(
         "Review", 
         foreign_keys="Review.reviewed_user_id",
@@ -400,4 +405,171 @@ class Review(Base):
         foreign_keys=[reviewed_user_id],
         back_populates="reviews_received",
         primaryjoin="Review.reviewed_user_id == SupplierProfile.user_profile_id"
+    )
+
+
+class Category(Base):
+    """
+    Product categories managed by admins
+    """
+    __tablename__ = "categories"
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    
+    # Category hierarchy (for subcategories)
+    parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("categories.id", ondelete="CASCADE")
+    )
+    
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    
+    # Relationships
+    parent: Mapped[Optional["Category"]] = relationship(
+        "Category", 
+        remote_side="Category.id",
+        back_populates="children"
+    )
+    children: Mapped[List["Category"]] = relationship(
+        "Category", 
+        back_populates="parent",
+        cascade="all, delete-orphan"
+    )
+    products: Mapped[List["Product"]] = relationship(
+        "Product", 
+        back_populates="category",
+        cascade="all, delete-orphan"
+    )
+
+
+class Product(Base):
+    """
+    Products listed by suppliers
+    """
+    __tablename__ = "products"
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    supplier_profile_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("supplier_profiles.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    category_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("categories.id", ondelete="RESTRICT"),
+        nullable=False
+    )
+    
+    # Basic Product Information
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    
+    # Product Specifications
+    unit: Mapped[str] = mapped_column(String(50), nullable=False)  # kg, piece, liter, etc.
+    brand: Mapped[Optional[str]] = mapped_column(String(100))
+    model: Mapped[Optional[str]] = mapped_column(String(100))
+    
+    # Product Images
+    primary_image_url: Mapped[Optional[str]] = mapped_column(String(500))
+    additional_images: Mapped[Optional[List[str]]] = mapped_column(JSONB)  # Array of image URLs
+    
+    # Inventory
+    minimum_order_quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    stock_quantity: Mapped[Optional[int]] = mapped_column(Integer)
+    
+    # Product Details
+    specifications: Mapped[Optional[dict]] = mapped_column(JSONB)  # Flexible specifications
+    tags: Mapped[Optional[List[str]]] = mapped_column(JSONB)  # Search tags
+    
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_featured: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    
+    # Relationships
+    supplier_profile: Mapped["SupplierProfile"] = relationship(
+        "SupplierProfile", 
+        back_populates="products"
+    )
+    category: Mapped["Category"] = relationship(
+        "Category", 
+        back_populates="products"
+    )
+    bulk_pricing_tiers: Mapped[List["BulkPricingTier"]] = relationship(
+        "BulkPricingTier", 
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="BulkPricingTier.min_quantity"
+    )
+
+
+class BulkPricingTier(Base):
+    """
+    Bulk pricing tiers for products
+    Example: 1-10 units = $5/unit, 11-50 units = $4.5/unit, 51+ units = $4/unit
+    """
+    __tablename__ = "bulk_pricing_tiers"
+    __table_args__ = (
+        CheckConstraint("min_quantity > 0", name="min_quantity_positive_check"),
+        CheckConstraint("max_quantity > min_quantity OR max_quantity IS NULL", name="max_quantity_greater_check"),
+        CheckConstraint("price_per_unit > 0", name="price_positive_check"),
+        UniqueConstraint("product_id", "min_quantity", name="unique_product_min_quantity"),
+    )
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    
+    # Quantity Range
+    min_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_quantity: Mapped[Optional[int]] = mapped_column(Integer)  # NULL means unlimited
+    
+    # Pricing
+    price_per_unit: Mapped[float] = mapped_column(Float, nullable=False)
+    
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    
+    # Relationships
+    product: Mapped["Product"] = relationship(
+        "Product", 
+        back_populates="bulk_pricing_tiers"
     )
