@@ -7,9 +7,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { VendorSignUpForm } from "@/modules/auth/ui/components/vendor-sign-up-form";
-import { SupplierSignUpForm } from "../components/supplier-sign-up-form";
 import { SignInForm } from "../sign-in-form";
 
 export default function SignInView() {

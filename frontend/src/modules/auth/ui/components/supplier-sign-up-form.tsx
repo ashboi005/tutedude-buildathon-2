@@ -57,7 +57,7 @@ export function SupplierSignUpForm() {
             companyName: data.companyName,
             address: data.address,
             role: "supplier",
-            emailRedirectTo: `${window.location.origin}/sign-in`,
+            emailRedirectTo: `${window.location.origin}/api/auth/callback`,
           },
         },
       });
