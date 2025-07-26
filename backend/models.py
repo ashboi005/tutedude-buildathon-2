@@ -233,6 +233,9 @@ class VendorProfile(Base):
     average_rating: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     total_reviews: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     
+    # Balance for payments
+    balance: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(True), 
         server_default=text("CURRENT_TIMESTAMP"),
@@ -309,6 +312,9 @@ class SupplierProfile(Base):
     # Rating System
     average_rating: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     total_reviews: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    
+    # Balance for payments
+    balance: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(True), 
@@ -596,3 +602,185 @@ class BulkPricingTier(Base):
         "Product", 
         back_populates="bulk_pricing_tiers"
     )
+
+
+class Order(Base):
+    """
+    Orders placed by vendors to suppliers
+    """
+    __tablename__ = "orders"
+    __table_args__ = (
+        CheckConstraint("total_amount > 0", name="total_amount_positive_check"),
+        CheckConstraint("quantity > 0", name="quantity_positive_check"),
+    )
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Order participants
+    buyer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    seller_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    
+    # Product details
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("products.id", ondelete="RESTRICT"),
+        nullable=False
+    )
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    price_per_unit: Mapped[float] = mapped_column(Float, nullable=False)
+    total_amount: Mapped[float] = mapped_column(Float, nullable=False)
+    
+    # Order type and payment
+    order_type: Mapped[str] = mapped_column(String(50), nullable=False)  # "buy_now", "buy_now_pay_later", "bulk_order"
+    payment_status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)  # "pending", "paid", "failed", "refunded"
+    due_date: Mapped[Optional[DateTime]] = mapped_column(DateTime(True))  # For pay later orders
+    
+    # Bulk order reference (if part of bulk order)
+    bulk_order_window_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("bulk_order_windows.id", ondelete="SET NULL")
+    )
+    
+    # Order status
+    order_status: Mapped[str] = mapped_column(String(50), default="confirmed", nullable=False)  # "confirmed", "processing", "shipped", "delivered", "cancelled"
+    
+    # Delivery details
+    delivery_address: Mapped[Optional[str]] = mapped_column(Text)
+    estimated_delivery: Mapped[Optional[DateTime]] = mapped_column(DateTime(True))
+    actual_delivery: Mapped[Optional[DateTime]] = mapped_column(DateTime(True))
+    
+    # Notes
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    
+    # Relationships
+    buyer: Mapped["UserProfile"] = relationship(
+        "UserProfile",
+        foreign_keys=[buyer_id],
+        backref="orders_as_buyer"
+    )
+    seller: Mapped["UserProfile"] = relationship(
+        "UserProfile",
+        foreign_keys=[seller_id],
+        backref="orders_as_seller"
+    )
+    product: Mapped["Product"] = relationship("Product")
+    bulk_order_window: Mapped[Optional["BulkOrderWindow"]] = relationship("BulkOrderWindow", back_populates="orders")
+
+
+class BulkOrderWindow(Base):
+    """
+    Bulk order windows where multiple vendors can join to get bulk pricing
+    """
+    __tablename__ = "bulk_order_windows"
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Window creator
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    
+    # Window details
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    
+    # Timing
+    window_start_time: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    window_end_time: Mapped[DateTime] = mapped_column(DateTime(True), nullable=False)
+    
+    # Status
+    status: Mapped[str] = mapped_column(String(50), default="open", nullable=False)  # "open", "closed", "finalized"
+    
+    # Totals (calculated when window closes)
+    total_participants: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    
+    # Relationships
+    creator: Mapped["UserProfile"] = relationship("UserProfile", backref="created_bulk_windows")
+    orders: Mapped[List["Order"]] = relationship("Order", back_populates="bulk_order_window")
+
+
+class Payment(Base):
+    """
+    Payment transactions for adding balance via Razorpay
+    """
+    __tablename__ = "payments"
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # User who made the payment
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    
+    # Payment details
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), default="INR", nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(50), default="razorpay", nullable=False)
+    
+    # Razorpay details
+    razorpay_order_id: Mapped[Optional[str]] = mapped_column(String(100))
+    razorpay_payment_id: Mapped[Optional[str]] = mapped_column(String(100))
+    razorpay_signature: Mapped[Optional[str]] = mapped_column(String(200))
+    
+    # Payment status
+    status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)  # "pending", "completed", "failed", "refunded"
+    
+    # Metadata
+    description: Mapped[Optional[str]] = mapped_column(String(255))
+    payment_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)  # Flexible payment metadata
+    
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+    
+    # Relationships
+    user: Mapped["UserProfile"] = relationship("UserProfile", backref="payments")

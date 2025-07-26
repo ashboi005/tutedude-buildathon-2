@@ -15,6 +15,8 @@ from routers.auth.auth import router as auth_router
 from routers.users.users import router as users_router
 from routers.admin.admin import router as admin_router
 from routers.products.products import router as products_router
+from routers.orders.orders import router as orders_router
+from routers.payments.payments import router as payments_router
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
 IS_PRODUCTION = ENVIRONMENT == "prod"
@@ -46,6 +48,8 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(admin_router)
 app.include_router(products_router)
+app.include_router(orders_router)
+app.include_router(payments_router)
 
 # =================
 # TEMPORARY DEVELOPMENT ROUTE (REMOVE IN PRODUCTION)
