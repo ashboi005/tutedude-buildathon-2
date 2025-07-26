@@ -36,6 +36,19 @@ class ResetPasswordRequest(BaseModel):
     access_token: str
     refresh_token: str  
 
+class CreateUserProfileRequest(BaseModel):
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None
+    role: Optional[str] = None
+    date_of_birth: Optional[datetime] = None
+    timezone: Optional[str] = None
+    language: Optional[str] = None
+    preferences: Optional[dict] = None  
+
 class UserResponse(BaseModel):
     id: str  
     user_id: str 

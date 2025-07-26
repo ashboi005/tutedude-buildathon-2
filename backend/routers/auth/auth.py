@@ -12,7 +12,8 @@ from .schemas import (
     TokenResponse,
     ForgotPasswordRequest,
     VerifyResetTokenRequest,
-    ResetPasswordRequest
+    ResetPasswordRequest,
+    CreateUserProfileRequest
 )
 from .helpers import auth_helpers
 from typing import Optional
@@ -302,4 +303,73 @@ async def logout(
     except Exception as e:
         logger.error(f"Logout failed: {str(e)}")
         return {"message": "Logout completed"}
+
+@router.post("/create-profile", response_model=UserResponse)
+async def create_user_profile(
+    profile_data: CreateUserProfileRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create or update user profile for the authenticated user"""
+    try:
+        # Check if user profile already exists
+        result = await db.execute(
+            select(UserProfile).where(UserProfile.user_id == current_user["user_id"])
+        )
+        existing_profile = result.scalar_one_or_none()
+        
+        if existing_profile:
+            # Update existing profile
+            for field, value in profile_data.model_dump(exclude_unset=True).items():
+                if hasattr(existing_profile, field) and value is not None:
+                    setattr(existing_profile, field, value)
+            
+            existing_profile.updated_at = datetime.utcnow()
+            await db.commit()
+            await db.refresh(existing_profile)
+            
+            # Convert to response format
+            from utils.response_helpers import convert_uuids_to_strings
+            user_data = convert_uuids_to_strings(existing_profile.__dict__)
+            user_data["email"] = current_user["email"]
+            
+            return UserResponse.model_validate(user_data)
+        
+        else:
+            # Create new profile
+            new_profile = UserProfile(
+                user_id=current_user["user_id"],
+                username=profile_data.username,
+                first_name=profile_data.first_name,
+                last_name=profile_data.last_name,
+                display_name=profile_data.display_name,
+                bio=profile_data.bio,
+                avatar_url=profile_data.avatar_url,
+                role=profile_data.role or "user",  # Default to "user" if no role provided
+                date_of_birth=profile_data.date_of_birth,
+                timezone=profile_data.timezone,
+                language=profile_data.language,
+                preferences=profile_data.preferences or {}
+            )
+            
+            db.add(new_profile)
+            await db.commit()
+            await db.refresh(new_profile)
+            
+            # Convert to response format
+            from utils.response_helpers import convert_uuids_to_strings
+            user_data = convert_uuids_to_strings(new_profile.__dict__)
+            user_data["email"] = current_user["email"]
+            
+            return UserResponse.model_validate(user_data)
+            
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Profile creation/update failed: {str(e)}")
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create/update profile"
+        )
 
