@@ -35,14 +35,30 @@ async def get_current_user(
     token = credentials.credentials
     supabase_user = auth_helpers.verify_token(token)  
     
+    # Initialize current_user with basic info
+    current_user = {
+        "user_id": supabase_user.id,
+        "email": supabase_user.email,
+        "role": None
+    }
+    
+    # Try to get role from JWT first
     if supabase_user.role:
-        current_user = {
-            "user_id": supabase_user.id,
-            "email": supabase_user.email,
-            "role": supabase_user.role
-        }
+        current_user["role"] = supabase_user.role
         logger.info(f"User {supabase_user.id} authenticated via JWT role: {supabase_user.role}")
-        
+    else:
+        # Fallback: Get role from database
+        logger.info(f"No role in JWT for user {supabase_user.id}, checking database...")
+        result = await db.execute(
+            select(UserProfile).where(UserProfile.user_id == supabase_user.id)
+        )
+        user_profile = result.scalar_one_or_none()
+        if user_profile:
+            current_user["role"] = user_profile.role
+            logger.info(f"User {supabase_user.id} role from database: {user_profile.role}")
+        else:
+            current_user["role"] = "user"  # Default fallback
+            logger.warning(f"No user profile found for {supabase_user.id}, using default role: user")
 
     request.state.current_user = current_user
     return current_user

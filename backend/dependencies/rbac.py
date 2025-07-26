@@ -13,31 +13,41 @@ RESOURCES_FOR_ROLES = {
         'admin': ['read', 'write', 'delete'], 
         'users': ['read', 'write', 'delete'], 
         'users/profiles': ['read', 'write', 'delete'], 
-        'users/search': ['read'], 
+        'users/vendor-profiles': ['read', 'write', 'delete'],
+        'users/supplier-profiles': ['read', 'write', 'delete'],
+        'users/reviews': ['read', 'write', 'delete'],
+        'categories': ['read', 'write', 'delete'],
+        'products': ['read', 'write', 'delete'],
         'analytics': ['read'],  
         'settings': ['read', 'write'], 
-        'content': ['read', 'write', 'delete'],  
         'reports': ['read', 'write'],  
     },
-    'moderator': {
-        'users/profiles': ['read', 'write'], 
-        'users/search': ['read'], 
-        'content': ['read', 'write'], 
-        'reports': ['read'],  
-    },
-    'agent': {
+    'supplier': {
         'users/me': ['read', 'write'], 
         'users/profiles': ['read'], 
-        'content': ['read', 'write'],  
+        'users/supplier-profiles': ['read', 'write'],  # Only their own profile
+        'users/vendor-profiles': ['read'],  # Can view vendor profiles
+        'users/reviews': ['read', 'write'],  # Can give and receive reviews
+        'categories': ['read'],  # Can view categories
+        'products': ['read', 'write', 'delete'],  # Full product management
+        'products/bulk-pricing': ['read', 'write', 'delete'],  # Manage pricing
+    },
+    'vendor': {
+        'users/me': ['read', 'write'], 
+        'users/profiles': ['read'], 
+        'users/vendor-profiles': ['read', 'write'],  # Only their own profile
+        'users/supplier-profiles': ['read'],  # Can view supplier profiles
+        'users/reviews': ['read', 'write'],  # Can give and receive reviews
+        'categories': ['read'],  # Can view categories
+        'products': ['read'],  # Can view products only
     },
     'user': {
         'users/me': ['read', 'write'], 
         'users/profiles': ['read'], 
-        'content': ['read', 'write'],  
-    },
-    'guest': {
-        'users/profiles': ['read'], 
-        'content': ['read'], 
+        'users/vendor-profiles': ['read'], 
+        'users/supplier-profiles': ['read'],
+        'categories': ['read'], 
+        'products': ['read'],  # Can view products
     }
 }
 
@@ -53,6 +63,8 @@ def normalize_path(path: str) -> str:
     
     if segments[0] == 'admin':
         if len(segments) >= 2:
+            if segments[1] == 'categories':
+                return 'categories'
             return f'admin/{segments[1]}'
         return 'admin'
     
@@ -62,18 +74,28 @@ def normalize_path(path: str) -> str:
                 return 'users/me'
             elif segments[1] == 'profile' or segments[1] == 'profiles':
                 return 'users/profiles'
-            elif segments[1] == 'search':
-                return 'users/search'
+            elif segments[1] == 'vendor-profile' or segments[1] == 'vendor-profiles':
+                return 'users/vendor-profiles'
+            elif segments[1] == 'supplier-profile' or segments[1] == 'supplier-profiles':
+                return 'users/supplier-profiles'
+            elif segments[1] == 'reviews':
+                return 'users/reviews'
         return 'users'
+    
+    elif segments[0] == 'products':
+        if len(segments) >= 2:
+            if segments[1] == 'bulk-pricing' or 'bulk-pricing' in segments:
+                return 'products/bulk-pricing'
+        return 'products'
+    
+    elif segments[0] == 'categories':
+        return 'categories'
     
     elif segments[0] == 'analytics':
         return 'analytics'
     
     elif segments[0] == 'settings':
         return 'settings'
-    
-    elif segments[0] == 'content':
-        return 'content'
     
     elif segments[0] == 'reports':
         return 'reports'
@@ -125,11 +147,11 @@ def require_permission(resource: str = None, permission: str = None):
                     detail="Authentication required"
                 )
 
-            user_role = 'agent'  # default fallback to match registration default
+            user_role = 'user'  # default fallback to match registration default
             if isinstance(current_user, dict) and 'role' in current_user:
                 user_role = current_user['role']
             else:
-                user_role = getattr(current_user, 'role', 'agent')
+                user_role = getattr(current_user, 'role', 'user')
 
             resource_name = resource or normalize_path(str(request.url.path))
             required_permission = permission or translate_method_to_action(request.method)
@@ -157,24 +179,48 @@ def require_permission(resource: str = None, permission: str = None):
     
     return check_rbac
 
+# Admin permissions
 require_admin = require_permission("admin", "read")
 require_admin_write = require_permission("admin", "write")
 require_admin_delete = require_permission("admin", "delete")
 
+# User management permissions
 require_user_management = require_permission("users", "read")
 require_user_management_write = require_permission("users", "write")
 require_user_management_delete = require_permission("users", "delete")
 
+# Profile permissions
 require_profile_read = require_permission("users/profiles", "read")
 require_profile_write = require_permission("users/profiles", "write")
 
+require_vendor_profile_read = require_permission("users/vendor-profiles", "read")
+require_vendor_profile_write = require_permission("users/vendor-profiles", "write")
+
+require_supplier_profile_read = require_permission("users/supplier-profiles", "read")
+require_supplier_profile_write = require_permission("users/supplier-profiles", "write")
+
+# Review permissions
+require_review_read = require_permission("users/reviews", "read")
+require_review_write = require_permission("users/reviews", "write")
+
+# Category permissions (admin only for write/delete)
+require_category_read = require_permission("categories", "read")
+require_category_write = require_permission("categories", "write")
+require_category_delete = require_permission("categories", "delete")
+
+# Product permissions
+require_product_read = require_permission("products", "read")
+require_product_write = require_permission("products", "write")  # Suppliers only
+require_product_delete = require_permission("products", "delete")  # Suppliers only
+
+# Bulk pricing permissions (suppliers only)
+require_bulk_pricing_read = require_permission("products/bulk-pricing", "read")
+require_bulk_pricing_write = require_permission("products/bulk-pricing", "write")
+require_bulk_pricing_delete = require_permission("products/bulk-pricing", "delete")
+
+# Analytics and reports (admin only)
 require_analytics = require_permission("analytics", "read")
 require_settings = require_permission("settings", "read")
 require_settings_write = require_permission("settings", "write")
-
-require_content_read = require_permission("content", "read")
-require_content_write = require_permission("content", "write")
-require_content_delete = require_permission("content", "delete")
-
 require_reports = require_permission("reports", "read")
 require_reports_write = require_permission("reports", "write")

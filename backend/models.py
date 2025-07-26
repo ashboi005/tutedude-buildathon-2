@@ -15,6 +15,7 @@ from sqlalchemy import (
     Float,
     Integer
 )
+from sqlalchemy.orm import foreign
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.ext.declarative import declarative_base
@@ -181,6 +182,16 @@ class UserProfile(Base):
         uselist=False,
         cascade="all, delete-orphan"
     )
+    reviews_given: Mapped[List["Review"]] = relationship(
+        "Review",
+        foreign_keys="Review.reviewer_user_id",
+        back_populates="reviewer_user_profile"
+    )
+    reviews_received: Mapped[List["Review"]] = relationship(
+        "Review",
+        foreign_keys="Review.reviewed_user_id",
+        back_populates="reviewed_user_profile"
+    )
 
 
 class VendorProfile(Base):
@@ -237,14 +248,15 @@ class VendorProfile(Base):
     user_profile: Mapped["UserProfile"] = relationship("UserProfile", back_populates="vendor_profile")
     reviews_received: Mapped[list["Review"]] = relationship(
         "Review", 
-        foreign_keys="Review.reviewed_user_id",
         back_populates="reviewed_vendor",
-        cascade="all, delete-orphan"
+        primaryjoin="VendorProfile.user_profile_id == foreign(Review.reviewed_user_id)",
+        viewonly=True
     )
     reviews_given: Mapped[list["Review"]] = relationship(
         "Review", 
-        foreign_keys="Review.reviewer_user_id",
-        back_populates="reviewer_vendor"
+        back_populates="reviewer_vendor",
+        primaryjoin="VendorProfile.user_profile_id == foreign(Review.reviewer_user_id)",
+        viewonly=True
     )
 
 
@@ -318,14 +330,15 @@ class SupplierProfile(Base):
     )
     reviews_received: Mapped[list["Review"]] = relationship(
         "Review", 
-        foreign_keys="Review.reviewed_user_id",
         back_populates="reviewed_supplier",
-        cascade="all, delete-orphan"
+        primaryjoin="SupplierProfile.user_profile_id == foreign(Review.reviewed_user_id)",
+        viewonly=True
     )
     reviews_given: Mapped[list["Review"]] = relationship(
         "Review", 
-        foreign_keys="Review.reviewer_user_id",
-        back_populates="reviewer_supplier"
+        back_populates="reviewer_supplier",
+        primaryjoin="SupplierProfile.user_profile_id == foreign(Review.reviewer_user_id)",
+        viewonly=True
     )
 
 
@@ -382,29 +395,39 @@ class Review(Base):
     )
     
     # Relationships
+    reviewer_user_profile: Mapped["UserProfile"] = relationship(
+        "UserProfile",
+        foreign_keys=[reviewer_user_id],
+        back_populates="reviews_given"
+    )
+    reviewed_user_profile: Mapped["UserProfile"] = relationship(
+        "UserProfile",
+        foreign_keys=[reviewed_user_id],
+        back_populates="reviews_received"
+    )
     reviewer_vendor: Mapped[Optional["VendorProfile"]] = relationship(
         "VendorProfile",
-        foreign_keys=[reviewer_user_id],
         back_populates="reviews_given",
-        primaryjoin="Review.reviewer_user_id == VendorProfile.user_profile_id"
+        primaryjoin="foreign(Review.reviewer_user_id) == VendorProfile.user_profile_id",
+        viewonly=True
     )
     reviewer_supplier: Mapped[Optional["SupplierProfile"]] = relationship(
         "SupplierProfile",
-        foreign_keys=[reviewer_user_id],
         back_populates="reviews_given",
-        primaryjoin="Review.reviewer_user_id == SupplierProfile.user_profile_id"
+        primaryjoin="foreign(Review.reviewer_user_id) == SupplierProfile.user_profile_id",
+        viewonly=True
     )
     reviewed_vendor: Mapped[Optional["VendorProfile"]] = relationship(
         "VendorProfile",
-        foreign_keys=[reviewed_user_id],
         back_populates="reviews_received",
-        primaryjoin="Review.reviewed_user_id == VendorProfile.user_profile_id"
+        primaryjoin="foreign(Review.reviewed_user_id) == VendorProfile.user_profile_id",
+        viewonly=True
     )
     reviewed_supplier: Mapped[Optional["SupplierProfile"]] = relationship(
         "SupplierProfile",
-        foreign_keys=[reviewed_user_id],
         back_populates="reviews_received",
-        primaryjoin="Review.reviewed_user_id == SupplierProfile.user_profile_id"
+        primaryjoin="foreign(Review.reviewed_user_id) == SupplierProfile.user_profile_id",
+        viewonly=True
     )
 
 

@@ -322,3 +322,27 @@ class VendorListResponse(BaseModel):
     page: int
     limit: int
     total: int
+
+
+class UserRoleUpdateRequest(BaseModel):
+    """Request schema for updating user role"""
+    new_role: str = Field(..., description="New role to assign to the user")
+    
+    @validator('new_role')
+    def validate_role(cls, v):
+        valid_roles = ['user', 'vendor', 'supplier', 'admin']
+        if v not in valid_roles:
+            raise ValueError(f'Role must be one of: {", ".join(valid_roles)}')
+        return v
+
+
+class UserRoleUpdateResponse(BaseModel):
+    """Response schema for role update operations"""
+    success: bool
+    message: str
+    user_id: str
+    new_role: str
+    old_role: Optional[str] = None
+    updated_in_database: bool
+    updated_in_supabase: bool
+    supabase_error: Optional[str] = None  # For debugging Supabase issues

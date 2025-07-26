@@ -2,16 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, or_
-from config import get_db
+from config import get_db, get_supabase_admin_client
 from models import UserProfile, VendorProfile, SupplierProfile, Review
 from routers.auth.auth import get_current_user
-from dependencies.rbac import require_profile_read, require_profile_write
+from dependencies.rbac import require_profile_read, require_profile_write, require_admin_write
+from utils.response_helpers import safe_model_validate, safe_model_validate_list, user_profile_to_dict, vendor_profile_to_dict, supplier_profile_to_dict, review_to_dict
 from .schemas import (
     UserProfileUpdate, UserProfileResponse, ProfileImageUpload, UserResponse,
     VendorProfileCreate, VendorProfileUpdate, VendorProfileResponse,
     SupplierProfileCreate, SupplierProfileUpdate, SupplierProfileResponse,
     ReviewCreate, ReviewUpdate, ReviewResponse, ReviewWithUserResponse,
-    VendorWithUserResponse, SupplierWithUserResponse, SupplierListResponse
+    VendorWithUserResponse, SupplierWithUserResponse, SupplierListResponse,
 )
 from .helpers import user_helpers
 from typing import Optional, List
@@ -19,6 +20,7 @@ from datetime import datetime
 import logging
 from datetime import datetime
 import uuid
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -45,21 +47,22 @@ async def get_current_user_profile(
             detail="User profile not found"
         )
     
-    user_data = {
-        **profile.__dict__,  
+    user_data = user_profile_to_dict(profile)
+    user_data.update({
         "user_id": current_user["user_id"],
         "email": current_user["email"],
         "role": current_user["role"]
-    }
+    })
     
-    return UserResponse.model_validate(user_data)
+    return safe_model_validate(UserResponse, user_data)
 
 
-@router.put("/me", response_model=UserProfileResponse, dependencies=[Depends(require_profile_write)])
+@router.put("/me", response_model=UserProfileResponse)
 async def update_current_user_profile(
     profile_update: UserProfileUpdate,
     current_user = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_profile_write)
 ):
     """Update current user's profile information"""
     try:
@@ -102,14 +105,14 @@ async def update_current_user_profile(
         await db.commit()
         await db.refresh(profile)
         
-        user_data = {
-            **profile.__dict__,  
+        user_data = user_profile_to_dict(profile)
+        user_data.update({
             "user_id": current_user["user_id"],
             "email": user_email,
             "role": current_user["role"]
-        }
+        })
         
-        return UserProfileResponse.model_validate(user_data)
+        return safe_model_validate(UserProfileResponse, user_data)
         
     except HTTPException:
         raise
@@ -285,7 +288,7 @@ async def create_vendor_profile(
         await db.commit()
         await db.refresh(vendor_profile)
         
-        return VendorProfileResponse.model_validate(vendor_profile)
+        return safe_model_validate(VendorProfileResponse, vendor_profile)
         
     except HTTPException:
         raise
@@ -329,7 +332,7 @@ async def get_my_vendor_profile(
                 detail="Vendor profile not found"
             )
         
-        return VendorProfileResponse.model_validate(vendor_profile)
+        return safe_model_validate(VendorProfileResponse, vendor_profile)
         
     except HTTPException:
         raise
@@ -383,7 +386,7 @@ async def update_my_vendor_profile(
         await db.commit()
         await db.refresh(vendor_profile)
         
-        return VendorProfileResponse.model_validate(vendor_profile)
+        return safe_model_validate(VendorProfileResponse, vendor_profile)
         
     except HTTPException:
         raise
@@ -488,7 +491,7 @@ async def create_supplier_profile(
         await db.commit()
         await db.refresh(supplier_profile)
         
-        return SupplierProfileResponse.model_validate(supplier_profile)
+        return safe_model_validate(SupplierProfileResponse, supplier_profile)
         
     except HTTPException:
         raise
@@ -532,7 +535,7 @@ async def get_my_supplier_profile(
                 detail="Supplier profile not found"
             )
         
-        return SupplierProfileResponse.model_validate(supplier_profile)
+        return safe_model_validate(SupplierProfileResponse, supplier_profile)
         
     except HTTPException:
         raise
@@ -586,7 +589,7 @@ async def update_my_supplier_profile(
         await db.commit()
         await db.refresh(supplier_profile)
         
-        return SupplierProfileResponse.model_validate(supplier_profile)
+        return safe_model_validate(SupplierProfileResponse, supplier_profile)
         
     except HTTPException:
         raise
@@ -773,7 +776,7 @@ async def create_review(
         await user_helpers.update_vendor_rating(review_data.reviewed_user_id, db)
         await user_helpers.update_supplier_rating(review_data.reviewed_user_id, db)
         
-        return ReviewResponse.model_validate(review)
+        return safe_model_validate(ReviewResponse, review)
         
     except HTTPException:
         raise
@@ -841,7 +844,7 @@ async def update_review(
             await user_helpers.update_vendor_rating(str(review.reviewed_user_id), db)
             await user_helpers.update_supplier_rating(str(review.reviewed_user_id), db)
         
-        return ReviewResponse.model_validate(review)
+        return safe_model_validate(ReviewResponse, review)
         
     except HTTPException:
         raise
@@ -879,12 +882,12 @@ async def get_user_reviews(
         
         reviews = []
         for review, reviewer_profile in reviews_data:
-            review_dict = {
-                **review.__dict__,
+            review_dict = review_to_dict(review)
+            review_dict.update({
                 "reviewer_name": reviewer_profile.display_name or reviewer_profile.first_name,
                 "reviewer_avatar": reviewer_profile.avatar_url
-            }
-            reviews.append(ReviewWithUserResponse.model_validate(review_dict))
+            })
+            reviews.append(safe_model_validate(ReviewWithUserResponse, review_dict))
         
         return reviews
         
@@ -956,3 +959,5 @@ async def delete_review(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete review"
         )
+
+

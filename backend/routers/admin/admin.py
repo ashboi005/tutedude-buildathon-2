@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from config import get_db, get_supabase_client
 from models import UserProfile, Category
+from utils.response_helpers import safe_model_validate, safe_model_validate_list, user_profile_to_dict, category_to_dict
 from typing import Optional
 from datetime import datetime
 import logging
@@ -20,13 +21,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
 supabase = get_supabase_client()
 
-@router.get("/users", response_model=UserListResponse, dependencies=[Depends(require_user_management)])
+def category_to_response(category: Category) -> CategoryResponse:
+    """Helper function to convert Category model to CategoryResponse"""
+    category_dict = category_to_dict(category)
+    return CategoryResponse.model_validate(category_dict)
+
+@router.get("/users", response_model=UserListResponse)
 async def list_all_users(
     page: int = 1,
     limit: int = 20,
     role: Optional[str] = None,
+    current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user)
+    _: bool = Depends(require_user_management)
 ):
     """
     Admin only: List all users with pagination and optional role filter
@@ -42,7 +49,8 @@ async def list_all_users(
         result = await db.execute(query)
         users = result.scalars().all()
         
-        user_list = [UserListItem.model_validate(user.__dict__) for user in users]
+        # Use safe model validation to handle UUID conversion
+        user_list = [safe_model_validate(UserListItem, user) for user in users]
         
         return UserListResponse(
             users=user_list,
@@ -58,12 +66,13 @@ async def list_all_users(
             detail="Failed to retrieve users"
         )
 
-@router.put("/users/{user_id}/role", dependencies=[Depends(require_user_management_write)])
+@router.put("/users/{user_id}/role")
 async def update_user_role(
     user_id: str,
     new_role: str = Form(..., description="New role: user, admin"),
+    current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user)
+    _: bool = Depends(require_user_management_write)
 ):
     """
     Admin only: Update user role
@@ -136,11 +145,12 @@ async def update_user_role(
 # CATEGORY MANAGEMENT ROUTES
 # =================
 
-@router.post("/categories", response_model=CategoryResponse, dependencies=[Depends(require_admin_write)])
+@router.post("/categories", response_model=CategoryResponse)
 async def create_category(
     category_data: CategoryCreate,
     current_user = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_admin_write)  # This will run after get_current_user
 ):
     """Admin only: Create a new product category"""
     try:
@@ -173,7 +183,8 @@ async def create_category(
         await db.commit()
         await db.refresh(category)
         
-        return CategoryResponse.model_validate(category)
+        # Convert to response model with proper string conversion
+        return category_to_response(category)
         
     except HTTPException:
         raise
@@ -186,13 +197,15 @@ async def create_category(
         )
 
 
-@router.get("/categories", response_model=CategoryListResponse, dependencies=[Depends(require_admin)])
+@router.get("/categories", response_model=CategoryListResponse)
 async def list_categories(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     parent_id: Optional[str] = Query(None),
     include_inactive: bool = Query(False),
-    db: AsyncSession = Depends(get_db)
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_admin)
 ):
     """Admin only: List all categories with pagination"""
     try:
@@ -236,9 +249,14 @@ async def list_categories(
             )
             children = children_result.scalars().all()
             
-            category_dict = category.__dict__.copy()
-            category_dict['children'] = [CategoryResponse.model_validate(child) for child in children]
-            categories_with_children.append(CategoryWithChildrenResponse.model_validate(category_dict))
+            # Convert children to response models
+            children_responses = [category_to_response(child) for child in children]
+            
+            # Create category response with proper string conversion using helper
+            category_dict = category_to_dict(category)
+            category_dict['children'] = children_responses
+            category_response = CategoryWithChildrenResponse.model_validate(category_dict)
+            categories_with_children.append(category_response)
         
         return CategoryListResponse(
             categories=categories_with_children,
@@ -255,10 +273,12 @@ async def list_categories(
         )
 
 
-@router.get("/categories/{category_id}", response_model=CategoryWithChildrenResponse, dependencies=[Depends(require_admin)])
+@router.get("/categories/{category_id}", response_model=CategoryWithChildrenResponse)
 async def get_category(
     category_id: str,
-    db: AsyncSession = Depends(get_db)
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_admin)
 ):
     """Admin only: Get category details by ID"""
     try:
@@ -282,9 +302,12 @@ async def get_category(
         )
         children = children_result.scalars().all()
         
-        category_dict = category.__dict__.copy()
-        category_dict['children'] = [CategoryResponse.model_validate(child) for child in children]
+        # Convert children to response models
+        children_responses = [category_to_response(child) for child in children]
         
+        # Create category response with proper string conversion using helper
+        category_dict = category_to_dict(category)
+        category_dict['children'] = children_responses
         return CategoryWithChildrenResponse.model_validate(category_dict)
         
     except HTTPException:
@@ -297,12 +320,13 @@ async def get_category(
         )
 
 
-@router.put("/categories/{category_id}", response_model=CategoryResponse, dependencies=[Depends(require_admin_write)])
+@router.put("/categories/{category_id}", response_model=CategoryResponse)
 async def update_category(
     category_id: str,
     category_update: CategoryUpdate,
     current_user = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_admin_write)
 ):
     """Admin only: Update category"""
     try:
@@ -362,7 +386,7 @@ async def update_category(
         await db.commit()
         await db.refresh(category)
         
-        return CategoryResponse.model_validate(category)
+        return category_to_response(category)
         
     except HTTPException:
         raise
@@ -375,11 +399,12 @@ async def update_category(
         )
 
 
-@router.delete("/categories/{category_id}", dependencies=[Depends(require_admin_write)])
+@router.delete("/categories/{category_id}")
 async def delete_category(
     category_id: str,
     current_user = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(require_admin_write)
 ):
     """Admin only: Delete category (only if no products are using it)"""
     try:

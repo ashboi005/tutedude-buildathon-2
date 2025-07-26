@@ -5,6 +5,7 @@ from sqlalchemy import select, and_, func, or_
 from config import get_db
 from models import UserProfile, SupplierProfile, Product, BulkPricingTier, Category
 from routers.auth.auth import get_current_user
+from utils.response_helpers import safe_model_validate, safe_model_validate_list, category_to_dict
 from routers.products.schemas import (
     ProductCreate, ProductUpdate, ProductResponse, ProductWithPricingResponse, ProductListResponse,
     BulkPricingTierCreate, BulkPricingTierUpdate, BulkPricingTierResponse,
@@ -54,9 +55,13 @@ async def get_active_categories(
             )
             children = children_result.scalars().all()
             
-            category_dict = category.__dict__.copy()
-            category_dict['children'] = [CategoryResponse.model_validate(child) for child in children]
-            categories_with_children.append(CategoryWithChildrenResponse.model_validate(category_dict))
+            # Convert children to response models using safe validation
+            children_responses = [safe_model_validate(CategoryResponse, child) for child in children]
+            
+            # Create category response with proper string conversion
+            category_dict = category_to_dict(category)
+            category_dict['children'] = children_responses
+            categories_with_children.append(safe_model_validate(CategoryWithChildrenResponse, category_dict))
         
         return categories_with_children
         
@@ -65,6 +70,108 @@ async def get_active_categories(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get categories"
+        )
+
+
+@router.get("/by-category/{category_id}", response_model=ProductListResponse)
+async def get_products_by_category(
+    category_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
+    min_price: Optional[float] = Query(None, ge=0),
+    max_price: Optional[float] = Query(None, ge=0),
+    is_active: bool = Query(True),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all products by category with pagination and filtering"""
+    try:
+        # Verify category exists
+        result = await db.execute(
+            select(Category).where(Category.id == category_id)
+        )
+        category = result.scalar_one_or_none()
+        
+        if not category:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Category not found"
+            )
+        
+        # Build query for products in this category
+        query = select(Product, Category, SupplierProfile, UserProfile).join(
+            Category, Product.category_id == Category.id
+        ).join(
+            SupplierProfile, Product.supplier_profile_id == SupplierProfile.id
+        ).join(
+            UserProfile, SupplierProfile.user_profile_id == UserProfile.id
+        ).where(Product.category_id == category_id)
+        
+        # Apply filters
+        if is_active:
+            query = query.where(Product.is_active == True)
+        
+        if min_price is not None:
+            query = query.where(Product.base_price >= min_price)
+        
+        if max_price is not None:
+            query = query.where(Product.base_price <= max_price)
+        
+        # Get total count
+        count_query = select(func.count(Product.id)).where(
+            Product.category_id == category_id
+        )
+        if is_active:
+            count_query = count_query.where(Product.is_active == True)
+        if min_price is not None:
+            count_query = count_query.where(Product.base_price >= min_price)
+        if max_price is not None:
+            count_query = count_query.where(Product.base_price <= max_price)
+        
+        total_result = await db.execute(count_query)
+        total = total_result.scalar()
+        
+        # Apply pagination
+        offset = (page - 1) * limit
+        query = query.offset(offset).limit(limit).order_by(Product.created_at.desc())
+        
+        result = await db.execute(query)
+        products_data = result.all()
+        
+        # Build response
+        products_with_pricing = []
+        for product, category, supplier_profile, user_profile in products_data:
+            # Get pricing tiers
+            pricing_result = await db.execute(
+                select(BulkPricingTier)
+                .where(BulkPricingTier.product_id == product.id)
+                .order_by(BulkPricingTier.min_quantity)
+            )
+            pricing_tiers = pricing_result.scalars().all()
+            
+            # Convert using safe validation
+            product_dict = safe_model_validate(ProductResponse, product).__dict__.copy()
+            product_dict['bulk_pricing_tiers'] = [
+                safe_model_validate(BulkPricingTierResponse, tier) for tier in pricing_tiers
+            ]
+            product_dict['category'] = safe_model_validate(CategoryResponse, category)
+            product_dict['supplier_name'] = user_profile.display_name or f"{user_profile.first_name} {user_profile.last_name}".strip()
+            
+            products_with_pricing.append(safe_model_validate(ProductWithPricingResponse, product_dict))
+        
+        return ProductListResponse(
+            products=products_with_pricing,
+            page=page,
+            limit=limit,
+            total=total
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting products by category: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get products by category"
         )
 
 
@@ -932,75 +1039,4 @@ async def list_products(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list products"
-        )
-
-
-@router.post("/calculate-price", response_model=PriceCalculationResponse)
-async def calculate_price(
-    price_request: PriceCalculationRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """Calculate price for a specific quantity of a product"""
-    try:
-        # Get product
-        result = await db.execute(
-            select(Product).where(
-                Product.id == price_request.product_id,
-                Product.is_active == True
-            )
-        )
-        product = result.scalar_one_or_none()
-        
-        if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Product not found"
-            )
-        
-        # Get pricing tiers
-        result = await db.execute(
-            select(BulkPricingTier)
-            .where(BulkPricingTier.product_id == price_request.product_id)
-            .order_by(BulkPricingTier.min_quantity)
-        )
-        pricing_tiers = result.scalars().all()
-        
-        if not pricing_tiers:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No pricing tiers found for this product"
-            )
-        
-        # Find the appropriate pricing tier
-        selected_tier = None
-        for tier in pricing_tiers:
-            if (price_request.quantity >= tier.min_quantity and 
-                (tier.max_quantity is None or price_request.quantity <= tier.max_quantity)):
-                selected_tier = tier
-                break
-        
-        if not selected_tier:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"No pricing tier available for quantity {price_request.quantity}"
-            )
-        
-        # Calculate total price
-        total_price = price_request.quantity * selected_tier.price_per_unit
-        
-        return PriceCalculationResponse(
-            product_id=price_request.product_id,
-            quantity=price_request.quantity,
-            price_per_unit=selected_tier.price_per_unit,
-            total_price=total_price,
-            tier_used=BulkPricingTierResponse.model_validate(selected_tier)
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error calculating price: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to calculate price"
         )
