@@ -51,7 +51,7 @@ export function VendorSignUpForm() {
             name: data.username,
             phoneNo: data.phoneNo,
             role: "vendor",
-            emailRedirectTo: `${window.location.origin}/sign-in`,
+            emailRedirectTo: `${window.location.origin}/api/auth/callback`,
           },
         },
       });
