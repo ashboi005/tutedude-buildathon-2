@@ -108,10 +108,9 @@ export default function CreateProfilePage() {
 
   // --- Form Submission Handler ---
   const onSubmit = async (data: ProfileFormData) => {
-    setIsLoading(true);
     const { profilePic, ...profileData } = data;
     const imageFile = profilePic?.[0];
-    console.log("Profile Data:", profileData);
+    console.log("button clicked", profileData, imageFile);
     try {
       const nameParts = profileData.fullName.split(' ');
       const firstName = nameParts[0];
