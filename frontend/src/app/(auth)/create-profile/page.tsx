@@ -9,7 +9,6 @@ import { z } from "zod";
 import { toast } from "sonner";
 import { Loader2, Upload } from "lucide-react";
 
-// Your custom components
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -85,7 +84,7 @@ export default function CreateProfilePage() {
   // --- Authentication & Pre-filling ---
   useEffect(() => {
     const checkAuth = async () => {
-      const supabase = createClient();
+      const supabase = await createClient();
       const { data: { session } } = await supabase.auth.getSession();
 
       if (!session) {
@@ -112,7 +111,7 @@ export default function CreateProfilePage() {
     setIsLoading(true);
     const { profilePic, ...profileData } = data;
     const imageFile = profilePic?.[0];
-
+    console.log("Profile Data:", profileData);
     try {
       const nameParts = profileData.fullName.split(' ');
       const firstName = nameParts[0];

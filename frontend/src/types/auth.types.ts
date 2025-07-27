@@ -3,7 +3,7 @@
 /**
  * Defines the possible roles for a user in the application.
  */
-export type Role = 'vendor' | 'supplier' | 'user';
+export type Role = 'vendor' | 'supplier' ;
 
 /**
  * Represents the data payload required to create a new user profile
