@@ -784,3 +784,36 @@ class Payment(Base):
     
     # Relationships
     user: Mapped["UserProfile"] = relationship("UserProfile", backref="payments")
+
+
+class SupplierSubscription(Base):
+    """
+    Tracks which vendors are subscribed to which suppliers for updates.
+    """
+    __tablename__ = "supplier_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("vendor_user_id", "supplier_user_id", name="unique_vendor_supplier_subscription"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    vendor_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    supplier_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), 
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(True), 
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False
+    )
+
+    # Relationships
+    vendor: Mapped["UserProfile"] = relationship("UserProfile", foreign_keys=[vendor_user_id], backref="supplier_subscriptions")
+    supplier: Mapped["UserProfile"] = relationship("UserProfile", foreign_keys=[supplier_user_id], backref="subscribers")

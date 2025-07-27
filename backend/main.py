@@ -17,6 +17,7 @@ from routers.admin.admin import router as admin_router
 from routers.products.products import router as products_router
 from routers.orders.orders import router as orders_router
 from routers.payments.payments import router as payments_router
+from routers.suppliers.suppliers import router as suppliers_router
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
 IS_PRODUCTION = ENVIRONMENT == "prod"
@@ -50,14 +51,8 @@ app.include_router(admin_router)
 app.include_router(products_router)
 app.include_router(orders_router)
 app.include_router(payments_router)
+app.include_router(suppliers_router)
 
-# =================
-# TEMPORARY DEVELOPMENT ROUTE (REMOVE IN PRODUCTION)
-# =================
-
-# =================
-# TEMPORARY DEVELOPMENT ROUTES (REMOVE IN PRODUCTION)
-# =================
 
 @app.put("/temp/users/{user_id}/change-role", response_model=UserRoleUpdateResponse)
 async def temp_change_user_role(

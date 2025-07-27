@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 from config import get_db
@@ -6,6 +6,11 @@ from models import UserProfile, VendorProfile, SupplierProfile, Order, Product, 
 from routers.auth.auth import get_current_user
 from dependencies.rbac import require_profile_read, require_profile_write
 from utils.response_helpers import safe_model_validate, safe_model_validate_list
+from utils.notifications import (
+    send_email, send_sms, 
+    get_order_confirmation_email, get_order_confirmation_sms,
+    get_bulk_order_finalized_email, get_bulk_order_finalized_sms
+)
 from .schemas import (
     OrderCreate, OrderResponse, OrderWithDetailsResponse, OrderListResponse,
     BulkOrderWindowCreate, BulkOrderWindowResponse, BulkOrderWindowWithOrdersResponse, 
@@ -14,10 +19,13 @@ from .schemas import (
 from typing import Optional, List
 from datetime import datetime, timedelta
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
+
+INTERNAL_SECRET = os.getenv("INTERNAL_SECRET")
 
 
 def calculate_price_for_quantity(bulk_pricing_tiers: List[BulkPricingTier], quantity: int) -> float:
@@ -57,6 +65,7 @@ async def check_vendor_eligibility_for_pay_later(vendor_profile: VendorProfile) 
 @router.post("/create", response_model=OrderResponse)
 async def create_order(
     order_data: OrderCreate,
+    background_tasks: BackgroundTasks,
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(require_profile_write)
@@ -205,6 +214,9 @@ async def create_order(
         db.add(order)
         await db.commit()
         await db.refresh(order)
+        
+        # Send notifications
+        await send_order_notifications(order, product, buyer_profile, background_tasks, db)
         
         return safe_model_validate(OrderResponse, order)
         
@@ -681,3 +693,263 @@ async def get_bulk_window_details(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve bulk window details"
         )
+
+
+async def send_order_notifications(order: Order, product: Product, buyer_profile: UserProfile, background_tasks: BackgroundTasks, db: AsyncSession):
+    """Send email and SMS notifications for new orders"""
+    try:
+        # Get seller profile
+        seller_result = await db.execute(
+            select(UserProfile, SupplierProfile)
+            .join(SupplierProfile, UserProfile.id == SupplierProfile.user_profile_id)
+            .where(UserProfile.id == order.seller_id)
+        )
+        seller_data = seller_result.first()
+        
+        if not seller_data:
+            return
+        
+        seller_profile, supplier_profile = seller_data
+        
+        # Prepare order data for templates
+        order_data = {
+            "id": str(order.id),
+            "product_name": product.name,
+            "quantity": order.quantity,
+            "price_per_unit": order.price_per_unit,
+            "total_amount": order.total_amount,
+            "order_type": order.order_type,
+            "payment_status": order.payment_status
+        }
+        
+        # Get contact information (you might need to adjust based on your user model structure)
+        buyer_email = getattr(buyer_profile, 'email', None)
+        seller_email = getattr(seller_profile, 'email', None) or supplier_profile.email
+        
+        buyer_phone = None
+        seller_phone = supplier_profile.phone_number
+        
+        # Try to get buyer phone from vendor profile
+        vendor_result = await db.execute(
+            select(VendorProfile).where(VendorProfile.user_profile_id == buyer_profile.id)
+        )
+        vendor_profile = vendor_result.scalar_one_or_none()
+        if vendor_profile:
+            buyer_phone = vendor_profile.phone_number
+        
+        # Send notifications to buyer
+        if buyer_email:
+            subject, body = get_order_confirmation_email(order_data, is_buyer=True)
+            background_tasks.add_task(send_email, buyer_email, subject, body)
+        
+        if buyer_phone:
+            sms_body = get_order_confirmation_sms(order_data, is_buyer=True)
+            background_tasks.add_task(send_sms, buyer_phone, sms_body)
+        
+        # Send notifications to seller
+        if seller_email:
+            subject, body = get_order_confirmation_email(order_data, is_buyer=False)
+            background_tasks.add_task(send_email, seller_email, subject, body)
+        
+        if seller_phone:
+            sms_body = get_order_confirmation_sms(order_data, is_buyer=False)
+            background_tasks.add_task(send_sms, seller_phone, sms_body)
+            
+    except Exception as e:
+        logger.error(f"Failed to send order notifications: {str(e)}")
+
+
+@router.post("/process-bulk-windows", status_code=status.HTTP_200_OK)
+async def process_bulk_windows(
+    x_internal_secret: str = Header(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Process expired bulk order windows - called by cron job"""
+    if x_internal_secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    
+    try:
+        # Find all bulk windows with status='open' and window_end_time < now()
+        windows_result = await db.execute(
+            select(BulkOrderWindow).where(
+                and_(
+                    BulkOrderWindow.status == "open",
+                    BulkOrderWindow.window_end_time < datetime.utcnow()
+                )
+            )
+        )
+        windows_to_process = windows_result.scalars().all()
+        
+        processed_count = 0
+        
+        for window in windows_to_process:
+            try:
+                # Get all orders in this window
+                orders_result = await db.execute(
+                    select(Order).where(Order.bulk_order_window_id == window.id)
+                )
+                orders = orders_result.scalars().all()
+                
+                if not orders:
+                    # No orders in this window, just finalize it
+                    window.status = "finalized"
+                    window.total_participants = 0
+                    window.total_amount = 0.0
+                    window.updated_at = datetime.utcnow()
+                    continue
+                
+                # Group orders by product
+                product_orders = {}
+                for order in orders:
+                    if order.product_id not in product_orders:
+                        product_orders[order.product_id] = []
+                    product_orders[order.product_id].append(order)
+                
+                # Process each product group
+                for product_id, product_orders_list in product_orders.items():
+                    # Get product and pricing tiers
+                    product_result = await db.execute(
+                        select(Product).where(Product.id == product_id)
+                    )
+                    product = product_result.scalar_one()
+                    
+                    pricing_result = await db.execute(
+                        select(BulkPricingTier)
+                        .where(BulkPricingTier.product_id == product_id)
+                        .order_by(BulkPricingTier.min_quantity)
+                    )
+                    pricing_tiers = pricing_result.scalars().all()
+                    
+                    # Calculate total quantity for this product
+                    total_quantity = sum(order.quantity for order in product_orders_list)
+                    
+                    # Find the correct pricing tier
+                    new_price_per_unit = calculate_price_for_quantity(pricing_tiers, total_quantity)
+                    
+                    # Update all orders for this product
+                    for order in product_orders_list:
+                        old_total = order.total_amount
+                        order.price_per_unit = new_price_per_unit
+                        order.total_amount = new_price_per_unit * order.quantity
+                        
+                        # Get vendor profile for balance deduction
+                        vendor_result = await db.execute(
+                            select(VendorProfile).where(VendorProfile.user_profile_id == order.buyer_id)
+                        )
+                        vendor_profile = vendor_result.scalar_one_or_none()
+                        
+                        if vendor_profile and vendor_profile.balance >= order.total_amount:
+                            vendor_profile.balance -= order.total_amount
+                            order.payment_status = "paid"
+                        else:
+                            order.payment_status = "failed"
+                        
+                        order.updated_at = datetime.utcnow()
+                
+                # Update window totals
+                total_participants = len(set(order.buyer_id for order in orders))
+                total_amount = sum(order.total_amount for order in orders if order.payment_status == "paid")
+                
+                window.status = "finalized"
+                window.total_participants = total_participants
+                window.total_amount = total_amount
+                window.updated_at = datetime.utcnow()
+                
+                # Send notifications to all participants
+                await send_bulk_order_notifications(window, orders, db)
+                
+                processed_count += 1
+                logger.info(f"Processed bulk window {window.id}: {total_participants} participants, ₹{total_amount}")
+                
+            except Exception as e:
+                logger.error(f"Failed to process bulk window {window.id}: {str(e)}")
+                continue
+        
+        await db.commit()
+        
+        return {
+            "message": f"Successfully processed {processed_count} bulk order windows",
+            "processed_count": processed_count
+        }
+        
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to process bulk windows: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process bulk windows"
+        )
+
+
+async def send_bulk_order_notifications(window: BulkOrderWindow, orders: List[Order], db: AsyncSession):
+    """Send notifications for finalized bulk orders"""
+    try:
+        # Group orders by buyer
+        buyer_orders = {}
+        for order in orders:
+            if order.buyer_id not in buyer_orders:
+                buyer_orders[order.buyer_id] = []
+            buyer_orders[order.buyer_id].append(order)
+        
+        # Send notifications to each buyer
+        for buyer_id, buyer_order_list in buyer_orders.items():
+            try:
+                # Get buyer profile and contact info
+                buyer_result = await db.execute(
+                    select(UserProfile, VendorProfile)
+                    .join(VendorProfile, UserProfile.id == VendorProfile.user_profile_id)
+                    .where(UserProfile.id == buyer_id)
+                )
+                buyer_data = buyer_result.first()
+                
+                if not buyer_data:
+                    continue
+                
+                buyer_profile, vendor_profile = buyer_data
+                
+                # Prepare data for templates
+                window_data = {
+                    "title": window.title,
+                    "total_participants": window.total_participants,
+                    "total_amount": window.total_amount
+                }
+                
+                order_data_list = []
+                for order in buyer_order_list:
+                    # Get product name
+                    product_result = await db.execute(
+                        select(Product).where(Product.id == order.product_id)
+                    )
+                    product = product_result.scalar_one_or_none()
+                    
+                    order_data_list.append({
+                        "id": str(order.id),
+                        "product_name": product.name if product else "Unknown Product",
+                        "quantity": order.quantity,
+                        "price_per_unit": order.price_per_unit,
+                        "total_amount": order.total_amount,
+                        "payment_status": order.payment_status
+                    })
+                
+                # Send email
+                buyer_email = getattr(buyer_profile, 'email', None)
+                if buyer_email:
+                    subject, body = get_bulk_order_finalized_email(window_data, order_data_list)
+                    send_email(buyer_email, subject, body)
+                
+                # Send SMS
+                buyer_phone = vendor_profile.phone_number
+                if buyer_phone:
+                    sms_body = get_bulk_order_finalized_sms(
+                        window.title, 
+                        len(order_data_list), 
+                        sum(order['total_amount'] for order in order_data_list)
+                    )
+                    send_sms(buyer_phone, sms_body)
+                    
+            except Exception as e:
+                logger.error(f"Failed to send bulk order notifications to buyer {buyer_id}: {str(e)}")
+                continue
+                
+    except Exception as e:
+        logger.error(f"Failed to send bulk order notifications: {str(e)}")

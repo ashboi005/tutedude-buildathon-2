@@ -329,9 +329,24 @@ async def create_user_profile(
             await db.refresh(existing_profile)
             
             # Convert to response format
-            from utils.response_helpers import convert_uuids_to_strings
-            user_data = convert_uuids_to_strings(existing_profile.__dict__)
-            user_data["email"] = current_user["email"]
+            user_data = {
+                "id": str(existing_profile.id),
+                "user_id": str(existing_profile.user_id),
+                "email": current_user["email"],
+                "username": existing_profile.username,
+                "first_name": existing_profile.first_name,
+                "last_name": existing_profile.last_name,
+                "display_name": existing_profile.display_name,
+                "bio": existing_profile.bio,
+                "avatar_url": existing_profile.avatar_url,
+                "role": existing_profile.role,
+                "date_of_birth": existing_profile.date_of_birth,
+                "timezone": existing_profile.timezone,
+                "language": existing_profile.language,
+                "preferences": existing_profile.preferences or {},
+                "created_at": existing_profile.created_at,
+                "updated_at": existing_profile.updated_at
+            }
             
             return UserResponse.model_validate(user_data)
         
@@ -357,9 +372,24 @@ async def create_user_profile(
             await db.refresh(new_profile)
             
             # Convert to response format
-            from utils.response_helpers import convert_uuids_to_strings
-            user_data = convert_uuids_to_strings(new_profile.__dict__)
-            user_data["email"] = current_user["email"]
+            user_data = {
+                "id": str(new_profile.id),
+                "user_id": str(new_profile.user_id),
+                "email": current_user["email"],
+                "username": new_profile.username,
+                "first_name": new_profile.first_name,
+                "last_name": new_profile.last_name,
+                "display_name": new_profile.display_name,
+                "bio": new_profile.bio,
+                "avatar_url": new_profile.avatar_url,
+                "role": new_profile.role,
+                "date_of_birth": new_profile.date_of_birth,
+                "timezone": new_profile.timezone,
+                "language": new_profile.language,
+                "preferences": new_profile.preferences or {},
+                "created_at": new_profile.created_at,
+                "updated_at": new_profile.updated_at
+            }
             
             return UserResponse.model_validate(user_data)
             
@@ -371,5 +401,54 @@ async def create_user_profile(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create/update profile"
+        )
+
+@router.get("/profile", response_model=UserResponse)
+async def get_user_profile(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get the current user's profile"""
+    try:
+        result = await db.execute(
+            select(UserProfile).where(UserProfile.user_id == current_user["user_id"])
+        )
+        user_profile = result.scalar_one_or_none()
+        
+        if not user_profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User profile not found"
+            )
+        
+        # Convert to response format
+        user_data = {
+            "id": str(user_profile.id),
+            "user_id": str(user_profile.user_id),
+            "email": current_user["email"],
+            "username": user_profile.username,
+            "first_name": user_profile.first_name,
+            "last_name": user_profile.last_name,
+            "display_name": user_profile.display_name,
+            "bio": user_profile.bio,
+            "avatar_url": user_profile.avatar_url,
+            "role": user_profile.role,
+            "date_of_birth": user_profile.date_of_birth,
+            "timezone": user_profile.timezone,
+            "language": user_profile.language,
+            "preferences": user_profile.preferences or {},
+            "created_at": user_profile.created_at,
+            "updated_at": user_profile.updated_at
+        }
+        
+        return UserResponse.model_validate(user_data)
+        
+    except Exception as e:
+        logger.error(f"Get profile failed: {str(e)}")
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve profile"
         )
 

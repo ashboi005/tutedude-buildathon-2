@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query, BackgroundTasks
 from fastapi.security import HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, or_
@@ -6,6 +6,7 @@ from config import get_db
 from models import UserProfile, SupplierProfile, Product, BulkPricingTier, Category
 from routers.auth.auth import get_current_user
 from utils.response_helpers import safe_model_validate, safe_model_validate_list, category_to_dict
+from routers.suppliers.suppliers import notify_subscribers
 from routers.products.schemas import (
     ProductCreate, ProductUpdate, ProductResponse, ProductWithPricingResponse, ProductListResponse,
     BulkPricingTierCreate, BulkPricingTierUpdate, BulkPricingTierResponse,
@@ -443,6 +444,7 @@ async def get_product(
 async def update_product(
     product_id: str,
     product_update: ProductUpdate,
+    background_tasks: BackgroundTasks,
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -528,6 +530,15 @@ async def update_product(
             BulkPricingTierResponse.model_validate(tier) for tier in pricing_tiers
         ]
         product_dict['category'] = CategoryResponse.model_validate(category_data)
+        
+        # Notify subscribers about product update
+        await notify_subscribers(
+            supplier_id=str(supplier_profile.user_profile_id),
+            update_type="product_update",
+            product_name=product.name,
+            db=db,
+            background_tasks=background_tasks
+        )
         
         return ProductWithPricingResponse.model_validate(product_dict)
         

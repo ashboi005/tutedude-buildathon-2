@@ -19,3 +19,4 @@ httpx==0.25.2
 PyJWT==2.8.0
 sqlalchemy[postgresql]==2.0.23
 razorpay==1.4.2
+twilio==9.7.0
